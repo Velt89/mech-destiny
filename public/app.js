@@ -358,13 +358,19 @@ function buyDraw(drawType) {
   createPiPayment(
     { amount: price, memo: `Mech Destiny: ${label}`, metadata: { kind: 'draw', drawType } },
     {
-      onComplete: (r) => {
+      onComplete: async (r) => {
         renderProfile(r.draws.user);
         const names = r.draws.granted.map((p) => `${p.rarity} ${p.type}`).join(', ');
         msg($('drawMsg'), `Draw complete — you got: ${names}. Pool is now ${r.poolTotal.toFixed(2)} π.${r.simulated ? ' (Sandbox simulation.)' : ''}`);
-        refreshInventory();
-        refreshDraw();
-        refreshPool();
+        // Await the refreshes so the inventory list AND the shop sell-dropdown
+        // both contain the newly drawn part before the user can act on it.
+        // (Bug 2026-11-26: fire-and-forget refreshes left the sell dropdown
+        // stale, so listing a just-drawn part failed with "not in your
+        // inventory" until a full page refresh.)
+        await refreshInventory();
+        await refreshDraw();
+        await refreshPool();
+        await refreshShop();
       },
     },
   );
@@ -398,6 +404,16 @@ async function createListing() {
   if (!partId) { msg($('shopMsg'), 'Pick a part to sell first.', true); return; }
   if (!Number.isFinite(pricePi) || pricePi <= 0) { msg($('shopMsg'), 'Set a positive price in π.', true); return; }
   try {
+    // Re-check ownership against a fresh inventory read first, so a part
+    // granted moments ago (draw/battle/forge) is never rejected as "not in
+    // your inventory" because the sell-dropdown was built from stale data.
+    const inv = await api(`/api/inventory?uid=${encodeURIComponent(state.user.uid)}`);
+    state.parts = inv.parts;
+    if (!inv.parts.some((p) => p.id === partId)) {
+      await refreshInventory();
+      msg($('shopMsg'), 'That part is not in your inventory yet — refreshed the list, pick it again.', true);
+      return;
+    }
     await api('/api/shop', { method: 'POST', body: { action: 'create-listing', uid: state.user.uid, username: state.user.username, partId, pricePi } });
     msg($('shopMsg'), `Listed for ${pricePi} π.`);
     await refreshShop();
@@ -421,11 +437,11 @@ function buyListing(listingId, price) {
   createPiPayment(
     { amount: price, memo: 'Mech Destiny: shop purchase', metadata: { kind: 'shop-buy', listingId } },
     {
-      onComplete: (r) => {
+      onComplete: async (r) => {
         renderProfile(r.sale.user);
         msg($('shopMsg'), `Bought ${r.sale.part.rarity} ${r.sale.part.type} for ${r.sale.pricePi} π.${r.simulated ? ' (Sandbox simulation.)' : ''}`);
-        refreshInventory();
-        refreshShop();
+        await refreshInventory();
+        await refreshShop();
       },
     },
   );
@@ -459,7 +475,7 @@ async function createPiPayment(paymentData, { onComplete }) {
         },
         onReadyForServerCompletion: async (paymentId, txid) => {
           const r = await api('/api/payment-complete', { method: 'POST', body: { paymentId, txid, uid: state.user.uid, username: state.user.username } });
-          onComplete(r);
+          await onComplete(r);
         },
         onCancel: (paymentId) => msg($('drawMsg'), `Payment cancelled (${paymentId}). Nothing granted.`, true),
         onError: (error) => msg($('drawMsg'), `Payment error: ${error && error.message || error}`, true),

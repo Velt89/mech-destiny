@@ -124,8 +124,13 @@ Minimum drop is **always Rare** — no Commons from paid draws.
 - **Every week, the best 3 in match ranking split 10% of the total pool:**
   1st 5%, 2nd 3%, 3rd 2%. The pool never empties — it keeps growing.
 - Weekly payout crediting to winners' Pi ledger is implemented in the store
-  (`weeklyPayout()`); **real Pi transfers to winners are a TODO** — no real Pi
-  moves in the scaffold.
+  (`weeklyPayout()`). **Real Pi transfers now exist as an admin-only A2U
+  endpoint** — `POST /api/payout` (`api/_lib/a2u.js`, Testnet only, capped at
+  1 π, admin-token gated, idempotent via `payoutId`, recorded in the store,
+  summary at `GET /api/payouts`). Wiring the weekly pool payout and shop
+  seller settlement to call it is still a TODO — today it is triggered
+  manually by the admin, which is also how the 5-unique-wallet A2U
+  prerequisite for the Mainnet outgoing wallet gets satisfied.
 
 ## Shop
 

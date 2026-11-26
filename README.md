@@ -28,6 +28,7 @@ no contract, no mint here.** Full design: `DESIGN.md`.
 | Pay draws | Standard 0.5 π, Ethereal Forge 1 π, 10-pack 9 π (guaranteed ≥1 Legendary). Minimum drop is always Rare. **Ethereal Fate** pity: 11th draw without an Ethereal → Legendary+ guaranteed; 30th → Ethereal guaranteed. Draws are granted **only** via `/api/payment-complete`. |
 | Reward pool | 10% of every pay draw goes to the pool (`/api/pool`). Weekly top 3 in match ranking split 10% of the pool (1st 5%, 2nd 3%, 3rd 2%). Payout credits the winners' Pi ledger in the scaffold — real Pi transfers are a TODO. |
 | Shop | `/api/shop` — list a duplicate part for Pi, buy listings via a Pi payment, make/accept part-for-part or part-for-Pi trade offers. All ownership changes server-side only. |
+| A2U payouts | `POST /api/payout` — admin-only App-to-User Pi payout (**Testnet only**, 1 π cap, `X-Admin-Token` gate, idempotent via `payoutId`, every payout recorded in the store). `GET /api/payouts` — public summary (counts + total Pi, no uids). Built for Pi's Mainnet outgoing-wallet prerequisite: A2U transactions to 5 unique wallets on the paired Testnet app. Env: `PI_APP_WALLET_SECRET` (Testnet app wallet seed — never Mainnet, never in code) + `PI_ADMIN_TOKEN`. |
 | Leaderboard | GET `/api/leaderboard` — match ranking by wins this week, tie-break Machine Power. |
 | PiNet | The whole page is the public, browse-only surface. Outside Pi Browser, `window.Pi` is absent: the app shows a PiNet notice and Pi-gated actions ask you to open it in Pi Browser. A clearly-labelled guest preview lets anyone try the game without a Pi account. |
 | Auth | Pi Authentication only (scopes `username`, `payments`, `wallet_address`). The frontend user object is presentation-only — `/api/me` verifies the access token via Platform API `GET /me` and only that verified `uid` is trusted. |
@@ -219,9 +220,17 @@ fresh explicit go-ahead, since that flips payments to real Pi.
       single document (see kv.js) — per-entity keys / transactions are a later TODO.
 - [ ] **Real PvP matching** for battles (currently a bot rival) — match by Machine
       Power bands, with a timeout so a battle always resolves.
-- [ ] **Real Pi settlement:** weekly pool payouts to winners and shop seller payouts
-      are currently backend-ledger credits only. Decide the payout flow (app wallet →
-      winners/sellers) and implement it before Mainnet.
+- [x] **Real Pi settlement (A2U endpoint):** `POST /api/payout` + `GET /api/payouts`
+      (done 2026-11-27, local verification only — not yet pushed/deployed): the
+      A2U flow (create -> build -> sign -> submit -> complete) is implemented
+      in `api/_lib/a2u.js` with the official Stellar SDK, Testnet-only,
+      admin-gated, 1 π cap, idempotent, recorded in the store. Still to do:
+      wire the weekly pool payout and shop seller settlement to call it, and
+      run the 5 test payouts to 5 unique wallets on Staging (needs
+      `PI_APP_WALLET_SECRET` + `PI_ADMIN_TOKEN` set in Vercel Staging env).
+- [ ] **Real Pi settlement (wiring):** weekly pool payouts to winners and shop
+      seller payouts are still backend-ledger credits — wire them to call the
+      A2U endpoint before Mainnet.
 - [ ] Weekly payout job: `/api/pool` payout is currently a manual call — move it to a
       scheduled/admin-only job before submission.
 - [ ] Anti-farming: per-uid rate limits, and decide whether guest-mode players appear

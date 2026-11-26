@@ -132,6 +132,7 @@ const users = new Map(); // uid -> user record
 const usedMergeIds = new Set();
 const usedBattleIds = new Set();
 const payments = new Map(); // paymentId -> { paymentId, uid, amount, kind, drawType?, listingId?, status, txid }
+const payouts = new Map(); // payoutId (client idempotency key) -> A2U payout record (see recordPayout)
 const listings = new Map(); // listingId -> { id, sellerUid, partId, pricePi, status, createdAt }
 const offers = new Map(); // offerId -> { id, fromUid, toUid, offeredPartId, wantedPartId, pricePi, status }
 const matches = new Map(); // matchId -> { id, uid, rival, rerollsLeft, status, utcDay, createdAt }
@@ -624,6 +625,44 @@ function setPaymentStatus(paymentId, status, txid) {
 }
 function getPayment(paymentId) { return payments.get(paymentId) || null; }
 
+// ---- app-to-user payouts (Pi A2U; see api/_lib/a2u.js) ----
+// One record per client payoutId. A replay of the same payoutId returns the
+// stored record instead of paying twice. Records hold the Pi payment id, the
+// chain tx hash and the status — the seed is NEVER stored here.
+function recordPayout(rec) {
+  const existing = payouts.get(rec.payoutId);
+  if (existing) return existing;
+  const stored = {
+    payoutId: rec.payoutId,
+    uid: rec.uid,
+    username: rec.username || null,
+    amount: rec.amount,
+    memo: rec.memo || null,
+    reason: rec.reason || null,
+    paymentId: rec.paymentId || null,
+    recipient: rec.recipient || null,
+    txid: rec.txid || null,
+    status: rec.status || 'completed', // completed | failed
+    error: rec.error || null,
+    createdAt: new Date().toISOString(),
+  };
+  payouts.set(stored.payoutId, stored);
+  return stored;
+}
+function getPayout(payoutId) { return payouts.get(payoutId) || null; }
+/** Public summary only — counts and totals, NO uids/usernames/addresses. */
+function payoutSummary() {
+  const all = [...payouts.values()];
+  const completed = all.filter((p) => p.status === 'completed');
+  return {
+    totalPayouts: all.length,
+    completedPayouts: completed.length,
+    failedPayouts: all.length - completed.length,
+    uniqueRecipients: new Set(completed.map((p) => p.uid)).size,
+    totalPiPaid: completed.reduce((s, p) => s + Number(p.amount || 0), 0),
+  };
+}
+
 // ---- shop ----
 function createListing(uid, username, { partId, pricePi }) {
   const u = getUser(uid, username);
@@ -743,6 +782,7 @@ function serialize() {
     usedMergeIds: [...usedMergeIds],
     usedBattleIds: [...usedBattleIds],
     payments: [...payments.values()],
+    payouts: [...payouts.values()],
     listings: [...listings.values()],
     offers: [...offers.values()],
     matches: [...matches.values()],
@@ -752,11 +792,12 @@ function serialize() {
 }
 function deserialize(data) {
   users.clear(); usedMergeIds.clear(); usedBattleIds.clear();
-  payments.clear(); listings.clear(); offers.clear(); matches.clear();
+  payments.clear(); payouts.clear(); listings.clear(); offers.clear(); matches.clear();
   (data.users || []).forEach((u) => users.set(u.uid, u));
   (data.usedMergeIds || []).forEach((id) => usedMergeIds.add(id));
   (data.usedBattleIds || []).forEach((id) => usedBattleIds.add(id));
   (data.payments || []).forEach((p) => payments.set(p.paymentId, p));
+  (data.payouts || []).forEach((p) => payouts.set(p.payoutId, p));
   (data.listings || []).forEach((l) => listings.set(l.id, l));
   (data.offers || []).forEach((o) => offers.set(o.id, o));
   (data.matches || []).forEach((m) => matches.set(m.id, m));
@@ -826,6 +867,7 @@ module.exports = {
   grantDraws, addToPool, getPool, weeklyPayout,
   matchRanking, leaderboard,
   recordPayment, setPaymentStatus, getPayment,
+  recordPayout, getPayout, payoutSummary,
   createListing, listListings, getListing, completeShopSale,
   createOffer, listOffersFor, acceptOffer,
 };

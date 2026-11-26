@@ -48,6 +48,8 @@ const apiHandlers = {
   '/api/shop': require('./api/shop'),
   '/api/payment-approve': require('./api/payment-approve'),
   '/api/payment-complete': require('./api/payment-complete'),
+  '/api/payout': require('./api/payout'),
+  '/api/payouts': require('./api/payouts'),
 };
 
 const server = http.createServer(async (req, res) => {

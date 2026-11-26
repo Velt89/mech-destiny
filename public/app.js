@@ -145,7 +145,7 @@ function afterSignedIn() {
   $('signInBtn').disabled = true;
   $('guestBtn').disabled = true;
   $('checkinBtn').disabled = false;
-  $('battleBtn').disabled = false;
+  $('battleFindBtn').disabled = false;
   $('forgeBtn').disabled = false;
   $('listBtn').disabled = false;
   $('drawStandardBtn').disabled = !state.piReady;
@@ -304,18 +304,103 @@ async function toggleEquip(partId, equip) {
 }
 
 // ---------- battle / forge ----------
-async function battle() {
+// Battle is 2 steps: preview the enemy FIRST, then choose — fight, reroll
+// the opponent once, or (after the reroll) surrender for -25 pts and keep
+// your parts. All buttons stay disabled until the preview loads.
+let currentMatch = null; // { matchId, rival, rerollsLeft, ... } from /api/battle preview
+
+function setBattleButtons({ find, fight, reroll, surrender }) {
+  $('battleFindBtn').disabled = !find;
+  $('battleFightBtn').disabled = !fight;
+  $('battleRerollBtn').disabled = !reroll;
+  $('battleSurrenderBtn').disabled = !surrender;
+  $('battleSurrenderBtn').hidden = !surrender;
+}
+
+function renderBattlePreview(r) {
+  currentMatch = r;
+  $('battlePreview').hidden = false;
+  $('battleEnemyName').textContent = r.rival.name;
+  $('battleEnemyPower').textContent = r.rival.power;
+  $('battleEnemySpeed').textContent = r.rival.speed;
+  $('battleEnemyArmor').textContent = r.rival.armor;
+  $('battleEnemyScore').textContent = r.rival.score;
+  $('battleEnemyParts').textContent = `Top parts: ${r.rival.topParts.map((p) => `${p.rarity} ${p.type} (P${p.power} S${p.speed} A${p.armor})`).join(', ')}`;
+  $('battleMyPower').textContent = r.myPower;
+  $('battleMySpeed').textContent = r.mySpeed;
+  $('battleMyArmor').textContent = r.myArmor;
+  $('battleMyScore').textContent = r.myScore;
+  $('battleRerollBtn').textContent = r.rerollsLeft > 0 ? `Reroll opponent (${r.rerollsLeft} left)` : 'Reroll opponent (used)';
+  $('battleRerollNote').textContent = r.rerollsLeft > 0
+    ? 'You get 1 reroll per match. Surrender unlocks after you use it.'
+    : 'Reroll used — you can fight, or surrender (−25 pts, keep your parts).';
+  setBattleButtons({ find: false, fight: true, reroll: r.rerollsLeft > 0, surrender: r.rerollsLeft === 0 });
+}
+
+async function findOpponent() {
   if (!state.user) return;
+  setBattleButtons({ find: false, fight: false, reroll: false, surrender: false });
+  msg($('battleMsg'), 'Finding an opponent…');
   try {
-    const r = await api('/api/battle', { method: 'POST', body: { uid: state.user.uid, username: state.user.username, battleId: crypto.randomUUID() } });
+    const r = await api('/api/battle', { method: 'POST', body: { action: 'preview', uid: state.user.uid, username: state.user.username } });
+    renderBattlePreview(r);
+    msg($('battleMsg'), `Enemy spotted: ${r.rival.name} — Power ${r.rival.power} vs your ${r.myPower}. Fight, reroll, or (after the reroll) surrender.`);
+  } catch (e) {
+    msg($('battleMsg'), `No opponent: ${e.message}`, true);
+    setBattleButtons({ find: true, fight: false, reroll: false, surrender: false });
+  }
+}
+
+async function rerollOpponent() {
+  if (!state.user || !currentMatch) return;
+  setBattleButtons({ find: false, fight: false, reroll: false, surrender: false });
+  try {
+    const r = await api('/api/battle', { method: 'POST', body: { action: 'reroll', matchId: currentMatch.matchId, uid: state.user.uid, username: state.user.username } });
+    renderBattlePreview(r);
+    msg($('battleMsg'), `New opponent: ${r.rival.name} — Power ${r.rival.power} vs your ${r.myPower}. Reroll used — fight, or surrender (−25 pts).`);
+  } catch (e) {
+    msg($('battleMsg'), `Reroll failed: ${e.message}`, true);
+    if (currentMatch) renderBattlePreview(currentMatch);
+  }
+}
+
+function battleResultMsg(r) {
+  return r.won
+    ? `You won vs ${r.rivalName}! Score ${r.myScore}–${r.rivalScore}. ${r.partWon ? `Took their ${r.partWon.rarity} ${r.partWon.type}.` : 'Inventory full — no spoils part.'} +Blueprint Fragment(s): ${r.fragments} total.`
+    : `You lost vs ${r.rivalName}. Score ${r.myScore}–${r.rivalScore}. ${r.shieldSaved ? 'Shield saved your part this time.' : r.partLost ? `Lost your ${r.partLost.rarity} ${r.partLost.type}.` : 'No part to lose.'}`;
+}
+
+async function fightMatch() {
+  if (!state.user || !currentMatch) return;
+  setBattleButtons({ find: false, fight: false, reroll: false, surrender: false });
+  try {
+    const r = await api('/api/battle', { method: 'POST', body: { action: 'fight', matchId: currentMatch.matchId, battleId: crypto.randomUUID(), uid: state.user.uid, username: state.user.username } });
     renderProfile(r.user);
-    msg($('battleMsg'), r.won
-      ? `You won vs ${r.rivalName}! Score ${r.myScore}–${r.rivalScore}. ${r.partWon ? `Took their ${r.partWon.rarity} ${r.partWon.type}.` : 'Inventory full — no spoils part.'} +Blueprint Fragment(s): ${r.fragments} total.`
-      : `You lost vs ${r.rivalName}. Score ${r.myScore}–${r.rivalScore}. ${r.shieldSaved ? 'Shield saved your part this time.' : r.partLost ? `Lost your ${r.partLost.rarity} ${r.partLost.type}.` : 'No part to lose.'}`);
+    msg($('battleMsg'), battleResultMsg(r));
+    currentMatch = null;
+    $('battlePreview').hidden = true;
     await refreshInventory();
     await refreshLeaderboard();
   } catch (e) {
-    msg($('battleMsg'), `Battle failed: ${e.message}`, true);
+    msg($('battleMsg'), `Fight failed: ${e.message}`, true);
+    if (currentMatch) renderBattlePreview(currentMatch);
+  }
+}
+
+async function surrenderMatch() {
+  if (!state.user || !currentMatch) return;
+  if (!confirm('Surrender? You lose 25 points, but you keep all your parts. Your free battle for today is used.')) return;
+  setBattleButtons({ find: false, fight: false, reroll: false, surrender: false });
+  try {
+    const r = await api('/api/battle', { method: 'POST', body: { action: 'surrender', matchId: currentMatch.matchId, uid: state.user.uid, username: state.user.username } });
+    renderProfile(r.user);
+    msg($('battleMsg'), `Surrendered — lost ${r.pointsLost} points (now ${r.points}), kept all your parts. Free battle used for today.`);
+    currentMatch = null;
+    $('battlePreview').hidden = true;
+    await refreshLeaderboard();
+  } catch (e) {
+    msg($('battleMsg'), `Surrender failed: ${e.message}`, true);
+    if (currentMatch) renderBattlePreview(currentMatch);
   }
 }
 
@@ -492,7 +577,10 @@ document.addEventListener('DOMContentLoaded', () => {
   $('guestBtn').addEventListener('click', signInAsGuest);
   $('checkinBtn').addEventListener('click', checkin);
   $('mergeBtn').addEventListener('click', mergeSelected);
-  $('battleBtn').addEventListener('click', battle);
+  $('battleFindBtn').addEventListener('click', findOpponent);
+  $('battleFightBtn').addEventListener('click', fightMatch);
+  $('battleRerollBtn').addEventListener('click', rerollOpponent);
+  $('battleSurrenderBtn').addEventListener('click', surrenderMatch);
   $('forgeBtn').addEventListener('click', forge);
   $('drawStandardBtn').addEventListener('click', () => buyDraw('standard'));
   $('drawForgeBtn').addEventListener('click', () => buyDraw('forge'));

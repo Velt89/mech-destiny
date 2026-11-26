@@ -16,7 +16,9 @@
  *     day 7 -> Epic, day 14 -> Legendary. Miss a day -> streak resets to 1.
  *     After day 14, drops are random again (Common 60 / Rare 28 / Epic 12).
  *   - Merge: 2 identical parts -> 1 part, one rarity up. +25 pts, x2 if result Epic+.
- *   - Battle: 1 free / UTC day. Loser loses 1 random part to the winner.
+ *   - Battle: 1 free / UTC day. Preview the enemy first, 1 reroll per match,
+ *     surrender (-25 pts, keep your parts) only after the reroll is used.
+ *     Loser loses 1 random part to the winner.
  *     Win -> +1 Blueprint Fragment (+2 on win-streak multiples of 3).
  *   - Forge: 5 fragments + 1 Legendary -> 1 Ethereal (ability rolled).
  *   - Pay draws: min Rare always. Standard 0.5pi, Ethereal Forge 1pi,
@@ -44,6 +46,7 @@ const MAX_EQUIPPED_ETHEREAL = 3;
 const FORGE_FRAGMENTS = 5;
 const POOL_SHARE = 0.10; // 10% of every pay draw goes to the pool
 const WEEKLY_PAYOUT_SHARE = [0.05, 0.03, 0.02]; // 1st 5%, 2nd 3%, 3rd 2% of pool
+const SURRENDER_POINTS = 25; // surrender costs 25 points (floor 0), no part lost
 
 const STAT_RANGES = {
   Common:    { power: [5, 12],  speed: [3, 8],   armor: [2, 6] },
@@ -109,8 +112,10 @@ const usedBattleIds = new Set();
 const payments = new Map(); // paymentId -> { paymentId, uid, amount, kind, drawType?, listingId?, status, txid }
 const listings = new Map(); // listingId -> { id, sellerUid, partId, pricePi, status, createdAt }
 const offers = new Map(); // offerId -> { id, fromUid, toUid, offeredPartId, wantedPartId, pricePi, status }
+const matches = new Map(); // matchId -> { id, uid, rival, rerollsLeft, status, utcDay, createdAt }
 let listingSeq = 1;
 let offerSeq = 1;
+let matchSeq = 1;
 const pool = { totalPi: 0, paidOutPi: 0, lastWeeklyPayout: null };
 
 function defaultUser(uid, username) {
@@ -277,27 +282,128 @@ function equipEthereal(uid, username, { partId, equip }) {
 }
 
 /**
- * Free daily battle. Server-side outcome from squad stats.
- * Winner takes 1 random part from the loser. Win -> +1 fragment (+2 on
- * win-streak multiples of 3). Scaffold rival is a bot (real PvP matching TODO).
+ * Bot rival generation for a preview: 3 parts, rarities scaled around the
+ * player's top squad part (never Ethereal — Ethereal never drops from battle).
+ * The rival is fixed once previewed; a reroll replaces it with a new one.
  */
-function doBattle(uid, username, { battleId, rival } = {}) {
+function generateRival(u) {
+  const squad = battleSquad(u);
+  const topRarity = squad.length ? Math.max(...squad.map((p) => rarityIndex(p.rarity))) : 0;
+  // Same number of parts as the player's squad (top 3), so a day-1 player
+  // with 1 part does not face a 3-part rival — the old generator scaled the
+  // rival score to 0.7x–1.3x of the player's, and this keeps that balance.
+  const count = Math.max(1, Math.min(3, squad.length));
+  const parts = Array.from({ length: count }, () => {
+    const idx = Math.max(0, Math.min(RARITIES.length - 2, topRarity + (Math.floor(Math.random() * 3) - 1)));
+    return makePart(randomType(), RARITIES[idx]);
+  });
+  return { name: `Rival-${Math.floor(Math.random() * 9000) + 1000}`, parts: parts.map(publicPart) };
+}
+function publicRival(r) {
+  const parts = [...r.parts].sort((a, b) => b.power - a.power);
+  return {
+    name: r.name,
+    power: parts.reduce((s, p) => s + p.power, 0),
+    speed: parts.reduce((s, p) => s + p.speed, 0),
+    armor: parts.reduce((s, p) => s + p.armor, 0),
+    score: Math.round(squadScore(parts)),
+    topParts: parts.map(publicPart),
+  };
+}
+function myBattleStats(u) {
+  const squad = battleSquad(u);
+  let score = squadScore(squad);
+  if (hasAbility(u, 'Overdrive')) score *= 1.2; // Overdrive: +20% Power next battle
+  return {
+    power: machinePower(u),
+    speed: squad.reduce((s, p) => s + p.speed, 0),
+    armor: squad.reduce((s, p) => s + p.armor, 0),
+    score: Math.round(score),
+  };
+}
+function previewPayload(match, u) {
+  return {
+    matchId: match.id,
+    rival: publicRival(match.rival),
+    myPower: myBattleStats(u).power,
+    mySpeed: myBattleStats(u).speed,
+    myArmor: myBattleStats(u).armor,
+    myScore: myBattleStats(u).score,
+    rerollsLeft: match.rerollsLeft,
+    status: match.status,
+    utcDay: match.utcDay,
+  };
+}
+
+/**
+ * Step 1 — preview the enemy. Creates today's pending match (idempotent:
+ * a second preview the same day returns the SAME match). Does NOT resolve
+ * the battle, does NOT consume the free battle, moves no part.
+ */
+function previewBattle(uid, username) {
   const u = getUser(uid, username);
-  if (!battleId || typeof battleId !== 'string') return { error: 'battleId is required (idempotency key)' };
-  if (usedBattleIds.has(battleId)) return { error: 'battle already submitted', user: publicUser(u) };
   const today = utcDay();
   if (u.lastBattleDay === today) return { error: 'free battle already used today — come back tomorrow (UTC)' };
   if (u.parts.length === 0) return { error: 'you have no parts — check in to get your first part' };
-  resetWeeklyIfNeeded(u);
+  const existing = [...matches.values()].find((m) => m.uid === uid && m.utcDay === today && m.status === 'pending');
+  if (existing) return previewPayload(existing, u);
+  const match = {
+    id: `match-${matchSeq++}`,
+    uid,
+    rival: generateRival(u),
+    rerollsLeft: 1,
+    status: 'pending',
+    utcDay: today,
+    createdAt: new Date().toISOString(),
+  };
+  matches.set(match.id, match);
+  save();
+  return previewPayload(match, u);
+}
+
+function getPendingMatch(uid, matchId) {
+  const match = matches.get(matchId);
+  if (!match) return { error: 'no pending match — find an opponent first' };
+  if (match.uid !== uid) return { error: 'that match belongs to another player' };
+  if (match.status !== 'pending') return { error: 'match already closed' };
+  if (match.utcDay !== utcDay()) return { error: 'match expired — find a new opponent' };
+  return { match };
+}
+
+/** Step 2a — reroll the opponent. Exactly 1 reroll per match. */
+function rerollBattle(uid, username, { matchId }) {
+  const u = getUser(uid, username);
+  const found = getPendingMatch(uid, matchId);
+  if (found.error) return { error: found.error, user: publicUser(u) };
+  const { match } = found;
+  if (match.rerollsLeft <= 0) return { error: 'no rerolls left — fight or surrender', user: publicUser(u) };
+  match.rival = generateRival(u);
+  match.rerollsLeft = 0;
+  save();
+  return previewPayload(match, u);
+}
+
+/** Step 2b — surrender. Only after the reroll is used. -25 pts (floor 0), no part lost or gained, no fragments. Consumes the free battle. */
+function surrenderBattle(uid, username, { matchId }) {
+  const u = getUser(uid, username);
+  const found = getPendingMatch(uid, matchId);
+  if (found.error) return { error: found.error, user: publicUser(u) };
+  const { match } = found;
+  if (match.rerollsLeft > 0) return { error: 'surrender unlocks after you use your reroll — reroll the opponent first', user: publicUser(u) };
+  const pointsLost = Math.min(SURRENDER_POINTS, u.points);
+  u.points -= pointsLost;
+  u.lastBattleDay = utcDay();
+  match.status = 'surrendered';
+  save();
+  return { surrendered: true, pointsLost, points: u.points, matchId: match.id, user: publicUser(u) };
+}
+
+/** Shared outcome resolution (no day/idempotency bookkeeping — callers do that). */
+function resolveBattleOutcome(u, rivalParts, rivalName) {
   const squad = battleSquad(u);
   let myScore = squadScore(squad);
   if (hasAbility(u, 'Overdrive')) myScore *= 1.2; // Overdrive: +20% Power next battle
-  const rivalParts = (rival && rival.parts) || null;
-  const rivalName = (rival && rival.name) || `Rival-${Math.floor(Math.random() * 9000) + 1000}`;
-  // Bot rival: power scaled around the player's squad (0.7x–1.3x), stats rolled.
-  const rivalScore = rivalParts
-    ? squadScore(rivalParts)
-    : myScore * (0.7 + Math.random() * 0.6);
+  const rivalScore = rivalParts ? squadScore(rivalParts) : myScore * (0.7 + Math.random() * 0.6);
   const won = myScore >= rivalScore;
   let partLost = null;
   let partWon = null;
@@ -318,6 +424,7 @@ function doBattle(uid, username, { battleId, rival } = {}) {
   } else {
     u.losses += 1;
     u.winStreak = 0;
+    const today = utcDay();
     if (hasAbility(u, 'Shield') && u.shieldUsedDay !== today) {
       shieldSaved = true;
       u.shieldUsedDay = today;
@@ -326,17 +433,55 @@ function doBattle(uid, username, { battleId, rival } = {}) {
       [partLost] = u.parts.splice(idx, 1);
     }
   }
-  u.lastBattleDay = today;
-  usedBattleIds.add(battleId);
-  save();
   return {
     won, myScore: Math.round(myScore), rivalScore: Math.round(rivalScore), rivalName,
     partWon: partWon ? publicPart(partWon) : null,
     partLost: partLost ? publicPart(partLost) : null,
     shieldSaved,
     fragments: u.fragments,
-    user: publicUser(u),
   };
+}
+
+/**
+ * Free daily battle (legacy single-call). Server-side outcome from squad stats.
+ * Winner takes 1 random part from the loser. Win -> +1 fragment (+2 on
+ * win-streak multiples of 3). Scaffold rival is a bot (real PvP matching TODO).
+ */
+function doBattle(uid, username, { battleId, rival } = {}) {
+  const u = getUser(uid, username);
+  if (!battleId || typeof battleId !== 'string') return { error: 'battleId is required (idempotency key)' };
+  if (usedBattleIds.has(battleId)) return { error: 'battle already submitted', user: publicUser(u) };
+  const today = utcDay();
+  if (u.lastBattleDay === today) return { error: 'free battle already used today — come back tomorrow (UTC)' };
+  if (u.parts.length === 0) return { error: 'you have no parts — check in to get your first part' };
+  resetWeeklyIfNeeded(u);
+  const rivalParts = (rival && rival.parts) || null;
+  const rivalName = (rival && rival.name) || `Rival-${Math.floor(Math.random() * 9000) + 1000}`;
+  const result = resolveBattleOutcome(u, rivalParts, rivalName);
+  u.lastBattleDay = today;
+  usedBattleIds.add(battleId);
+  save();
+  return { ...result, user: publicUser(u) };
+}
+
+/** Step 2c — fight a previewed match. Resolves exactly like doBattle, closes the match, consumes the free battle. */
+function fightBattle(uid, username, { matchId, battleId }) {
+  const u = getUser(uid, username);
+  const found = getPendingMatch(uid, matchId);
+  if (found.error) return { error: found.error, user: publicUser(u) };
+  const { match } = found;
+  if (battleId) {
+    if (typeof battleId !== 'string') return { error: 'battleId must be a string' };
+    if (usedBattleIds.has(battleId)) return { error: 'battle already submitted', user: publicUser(u) };
+  }
+  if (u.parts.length === 0) return { error: 'you have no parts — check in to get your first part' };
+  resetWeeklyIfNeeded(u);
+  const result = resolveBattleOutcome(u, match.rival.parts, match.rival.name);
+  u.lastBattleDay = utcDay();
+  if (battleId) usedBattleIds.add(battleId);
+  match.status = 'resolved';
+  save();
+  return { ...result, matchId: match.id, user: publicUser(u) };
 }
 
 /** Forge: 5 fragments + 1 Legendary part -> 1 Ethereal of that type. */
@@ -577,8 +722,9 @@ function save() {
       payments: [...payments.values()],
       listings: [...listings.values()],
       offers: [...offers.values()],
+      matches: [...matches.values()],
       pool,
-      listingSeq, offerSeq, partSeq,
+      listingSeq, offerSeq, matchSeq, partSeq,
     }, null, 2));
   } catch (e) { console.error('[store] save failed:', e.message); }
 }
@@ -593,9 +739,11 @@ function load() {
     (data.payments || []).forEach((p) => payments.set(p.paymentId, p));
     (data.listings || []).forEach((l) => listings.set(l.id, l));
     (data.offers || []).forEach((o) => offers.set(o.id, o));
+    (data.matches || []).forEach((m) => matches.set(m.id, m));
     if (data.pool) Object.assign(pool, data.pool);
     if (data.listingSeq) listingSeq = data.listingSeq;
     if (data.offerSeq) offerSeq = data.offerSeq;
+    if (data.matchSeq) matchSeq = data.matchSeq;
     if (data.partSeq) partSeq = data.partSeq;
   } catch (e) { console.error('[store] load failed:', e.message); }
 }
@@ -606,6 +754,7 @@ module.exports = {
   PART_TYPES, RARITIES, ABILITIES, INVENTORY_CAP, ETHEREAL_CAP, DRAW_ODDS, POOL_SHARE,
   getUser, publicUser, publicPart, machinePower,
   claimDaily, mergeParts, equipEthereal, doBattle, forgeCraft,
+  previewBattle, rerollBattle, surrenderBattle, fightBattle,
   grantDraws, addToPool, getPool, weeklyPayout,
   matchRanking, leaderboard,
   recordPayment, setPaymentStatus, getPayment,

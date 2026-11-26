@@ -23,7 +23,7 @@ no contract, no mint here.** Full design: `DESIGN.md`.
 | Day-1 check-in | POST `/api/checkin` — first check-in grants a Base Machine + 1 random part. Later check-ins: +1 part, +50 pts (+10 per streak day, cap +70). Streak day 3 → Rare, day 7 → Epic, day 14 → Legendary. Miss a day → streak resets to 1. After day 14, drops are random again. |
 | Parts | 5 types (Gear, Circuit, Battery, Magnet, Core), each with randomly rolled Power / Speed / Armor. Rarities Common → Rare → Epic → Legendary → Ethereal. |
 | Merge | POST `/api/merge` — 2 identical parts → 1 part, one rarity up. +25 pts, x2 if the result is Epic+. Idempotent via `mergeId`. Ethereal cannot merge. |
-| Battle | POST `/api/battle` — 1 free battle per UTC day, outcome computed server-side from squad stats. **Loser loses 1 random part to the winner.** Win → +1 Blueprint Fragment (+2 on a 3-win streak). Scaffold rival is a bot; real PvP matching is a TODO. |
+| Battle | POST `/api/battle` — 2-step: `preview` shows the enemy first (no battle used), 1 `reroll` per match, `fight` resolves, `surrender` (−25 pts, keep parts) only after the reroll. 1 free battle per UTC day; outcome computed server-side from squad stats. **Loser loses 1 random part to the winner.** Win → +1 Blueprint Fragment (+2 on a 3-win streak). Scaffold rival is a bot; real PvP matching is a TODO. |
 | Forge | POST `/api/forge` — 5 Blueprint Fragments + 1 Legendary part → 1 Ethereal with a rolled ability (Overdrive / Shield / Magnet). Max 3 Ethereals owned, max 3 equipped. |
 | Pay draws | Standard 0.5 π, Ethereal Forge 1 π, 10-pack 9 π (guaranteed ≥1 Legendary). Minimum drop is always Rare. **Ethereal Fate** pity: 11th draw without an Ethereal → Legendary+ guaranteed; 30th → Ethereal guaranteed. Draws are granted **only** via `/api/payment-complete`. |
 | Reward pool | 10% of every pay draw goes to the pool (`/api/pool`). Weekly top 3 in match ranking split 10% of the pool (1st 5%, 2nd 3%, 3rd 2%). Payout credits the winners' Pi ledger in the scaffold — real Pi transfers are a TODO. |
@@ -52,7 +52,7 @@ mech-destiny/
 │   ├── checkin.js     POST /api/checkin       (idempotent daily claim + part)
 │   ├── inventory.js   GET  /api/inventory
 │   ├── merge.js       POST /api/merge         (idempotent via mergeId)
-│   ├── battle.js      POST /api/battle        (idempotent via battleId, 1 free/day)
+│   ├── battle.js      POST /api/battle        (preview / reroll / fight / surrender, 1 free/day)
 │   ├── forge.js       POST /api/forge         (5 fragments + 1 Legendary -> Ethereal)
 │   ├── equip.js       POST /api/equip         (equip/unequip Ethereal core, max 3)
 │   ├── draw.js        GET  /api/draw          (odds + Ethereal Fate counter; never grants)
@@ -136,8 +136,12 @@ Do these in Pi Browser, with `PI_SANDBOX=true` and the Server API Key set:
    Tap again → `alreadyClaimed`, no double points, no double part.
 4. **Merge:** check in on a second day (or use a second part) and merge two identical
    parts → 1 part, one rarity up, +25 pts. Replay the same `mergeId` → rejected.
-5. **Battle:** tap **Battle today** → a win/loss resolves server-side; a loss costs
-   a part, a win takes one + a fragment. Tap again → rejected (free battle used).
+5. **Battle:** tap **Find opponent** → the enemy's power and stats are shown
+   first, next to yours → **Fight** (a win/loss resolves server-side; a loss
+   costs a part, a win takes one + a fragment), or **Reroll opponent** once
+   for a new rival, or — after the reroll — **Surrender** (−25 pts, keep your
+   parts). Surrender before the reroll is rejected. After fight/surrender,
+   tap again → rejected (free battle used).
 6. **Pay draw (Sandbox — moves no real Pi):** tap **Ethereal Forge (1 π)** →
    confirm → Pi Sandbox payment sheet → approve in the app → server approve →
    server complete → a Rare+ part, Ethereal Fate counter updates, pool +0.1 π.

@@ -56,9 +56,24 @@ only on "Ok build it").
 
 ## Battle — absolute, with stakes
 
+Battle is 2 steps: **preview the enemy first, then choose.**
+
+1. **Find opponent** (`POST /api/battle`, `action: 'preview'`): creates today's
+   pending match and shows the enemy FIRST — name, Power / Speed / Armor,
+   score, and top 3 parts — next to your own power/stats. Preview does NOT
+   resolve the battle, does NOT consume the free battle, moves no part. A
+   second preview the same day returns the SAME match (idempotent).
+2. **Choose — 1 reroll per match** (`action: 'reroll'`): swaps the rival for
+   a new random one; `rerollsLeft` becomes 0. A second reroll is rejected.
+3. **Fight** (`action: 'fight'`, with the matchId): resolves exactly as the
+   old immediate battle — stats vs stats, Power primary, Speed tie-break,
+   Armor in the score; the client never decides it. Consumes the free battle.
+4. **Surrender** (`action: 'surrender'`): available ONLY after the reroll has
+   been used (`rerollsLeft: 0`). Costs **−25 points (floor 0, never below 0)**
+   and NO part is lost or gained, no fragments. Consumes the free battle.
+
 - **1 free battle per UTC day** against a rival. Scaffold: the server picks a
-  bot rival (real PvP matching is a TODO). Outcome is computed server-side
-  from squad stats; the client never decides it.
+  bot rival (real PvP matching is a TODO).
 - **Lose the battle → you lose a part** (1 random part, taken by the winner).
 - **Win → you take 1 random part** from the loser (spoils part, Common/Rare/Epic)
   and earn **+1 Blueprint Fragment (+2 when your win streak hits 3, 6, 9…)**.

@@ -72,8 +72,21 @@
 
     <section class="card" id="battleCard">
       <h2>Battle — absolute stakes</h2>
-      <p>One free battle a day. Your top 3 parts fight a rival machine, stats vs stats. <strong>Lose and you lose a part. Win and you take one</strong> — plus a Blueprint Fragment (2 on a 3-win streak). Ethereal never drops from battle.</p>
-      <button id="battleBtn" class="btn primary" disabled>Battle today (free)</button>
+      <p>One free battle a day. First you see the enemy — their power and stats — then you choose: fight, reroll the opponent once, or (after the reroll) surrender for −25 points and keep your parts. <strong>Lose and you lose a part. Win and you take one</strong> — plus a Blueprint Fragment (2 on a 3-win streak). Ethereal never drops from battle.</p>
+      <button id="battleFindBtn" class="btn primary" disabled>Find opponent (free)</button>
+      <div id="battlePreview" hidden>
+        <h3>Enemy first</h3>
+        <p><strong>Enemy: <span id="battleEnemyName">—</span></strong></p>
+        <p>Enemy Power: <strong id="battleEnemyPower">—</strong> · Speed <span id="battleEnemySpeed">—</span> · Armor <span id="battleEnemyArmor">—</span> · Score <span id="battleEnemyScore">—</span></p>
+        <p id="battleEnemyParts" class="fineprint">—</p>
+        <p>Your Power: <strong id="battleMyPower">—</strong> · Speed <span id="battleMySpeed">—</span> · Armor <span id="battleMyArmor">—</span> · Score <span id="battleMyScore">—</span></p>
+        <div class="row">
+          <button id="battleFightBtn" class="btn primary" disabled>Fight</button>
+          <button id="battleRerollBtn" class="btn" disabled>Reroll opponent (1 left)</button>
+          <button id="battleSurrenderBtn" class="btn" disabled hidden>Surrender (−25 pts, keep your parts)</button>
+        </div>
+        <p id="battleRerollNote" class="fineprint">You get 1 reroll per match. Surrender unlocks after you use it.</p>
+      </div>
       <p id="battleMsg" class="msg" aria-live="polite"></p>
     </section>
 
@@ -128,7 +141,7 @@
       <ol class="howto">
         <li>Open this app in <strong>Pi Browser</strong> and sign in with Pi.</li>
         <li>Check in once a day — day 1 gives you a Base Machine and a part; day 3, 7 and 14 give guaranteed Rare, Epic and Legendary parts.</li>
-        <li>Merge identical parts to climb rarities. Battle once a day — the loser loses a part.</li>
+        <li>Merge identical parts to climb rarities. Battle once a day — first you see the enemy's power, then you fight, reroll once, or surrender (−25 pts, keep your parts) after the reroll. The loser loses a part.</li>
         <li>Forge Ethereals from 5 Blueprint Fragments + a Legendary, or try a pay draw (minimum Rare, Ethereal Fate pity applies).</li>
         <li>Sell duplicates and trade in the shop. Climb the weekly match ranking for a share of the reward pool.</li>
       </ol>

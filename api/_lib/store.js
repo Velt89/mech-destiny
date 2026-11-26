@@ -1,15 +1,35 @@
 'use strict';
 /**
- * Mech Destiny — in-memory store (Day-1 scaffold).
+ * Mech Destiny — shared store (Day-1 scaffold).
  *
  * Keyed by Pi `uid` (app-local, from Pi.authenticate -> backend /me verification).
  * NEVER key by username: usernames can change; uid is the stable identity.
  *
- * Persistence: in-memory only unless DATA_FILE is set (local dev, server.js sets it
- * to ./data/store.json). On Vercel the store is per-function-instance and DOES NOT
- * survive cold starts — TODO before submission: swap this module for a real DB
- * (Vercel KV / Postgres / any hosted store). The API surface is intentionally
- * DB-shaped so the swap is one module, not a rewrite.
+ * Persistence: the whole game state is ONE JSON document in a shared store.
+ *   - On Vercel with a KV/Redis store attached (KV_REST_API_URL +
+ *     KV_REST_API_TOKEN, or UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN),
+ *     every function instance loads the document at the start of each request
+ *     (store.loadState()) and writes it back before responding
+ *     (store.saveState()). All instances therefore see the same users, parts,
+ *     matches, pool and shop listings, and deploys no longer wipe anything.
+ *   - Without those env vars (local dev), the store is in-memory, with the
+ *     optional DATA_FILE JSON persistence (server.js sets it to
+ *     ./data/store.json). That mode is per-process only: do NOT rely on it on
+ *     Vercel, where each function instance has its own memory.
+ *   - FAIL CLOSED: when KV is configured but unreachable, loadState/saveState
+ *     THROW and handlers answer 500 "persistent store unavailable". There is
+ *     deliberately no silent fallback to per-instance memory — that would
+ *     reintroduce the split-brain bug (different instances, different
+ *     inventories) while looking healthy.
+ *   - Known race: read-modify-write on one document (see api/_lib/kv.js).
+ *     Acceptable for this hackathon scaffold; per-entity keys / transactions
+ *     are a later TODO.
+ *
+ * Game functions below stay SYNCHRONOUS and keep their exact names, arguments
+ * and response shapes. The async boundary lives in the API handlers: they
+ * await loadState() first, call the sync game function, then await saveState()
+ * (via the requireLoad/requireSave helpers, which answer 500 on KV failure).
+ * No frontend changes are needed.
  *
  * Economy (agreed 2026-11-26, see DESIGN.md):
  *   - Check-in: +50 pts, +10 per streak day (cap +70), +1 part. Streak day 3 -> Rare,
@@ -33,6 +53,8 @@
 
 const fs = require('fs');
 const path = require('path');
+const kv = require('./kv');
+const { sendJson } = require('./http');
 
 const DATA_FILE = process.env.DATA_FILE || null;
 
@@ -710,48 +732,94 @@ function acceptOffer(uid, username, { offerId }) {
   return { offer: publicOffer(o), user: publicUser(to) };
 }
 
-// ---- optional JSON persistence (local dev only) ----
+// ---- persistence: one shared JSON document (KV) or local file (dev) ----
+// The game functions above stay synchronous and call save() after every
+// mutation. save() only writes the local DATA_FILE (a no-op on Vercel, where
+// DATA_FILE is unset). The shared KV document is written by saveState(),
+// which API handlers await before responding — see loadState/saveState below.
+function serialize() {
+  return {
+    users: [...users.values()],
+    usedMergeIds: [...usedMergeIds],
+    usedBattleIds: [...usedBattleIds],
+    payments: [...payments.values()],
+    listings: [...listings.values()],
+    offers: [...offers.values()],
+    matches: [...matches.values()],
+    pool,
+    listingSeq, offerSeq, matchSeq, partSeq,
+  };
+}
+function deserialize(data) {
+  users.clear(); usedMergeIds.clear(); usedBattleIds.clear();
+  payments.clear(); listings.clear(); offers.clear(); matches.clear();
+  (data.users || []).forEach((u) => users.set(u.uid, u));
+  (data.usedMergeIds || []).forEach((id) => usedMergeIds.add(id));
+  (data.usedBattleIds || []).forEach((id) => usedBattleIds.add(id));
+  (data.payments || []).forEach((p) => payments.set(p.paymentId, p));
+  (data.listings || []).forEach((l) => listings.set(l.id, l));
+  (data.offers || []).forEach((o) => offers.set(o.id, o));
+  (data.matches || []).forEach((m) => matches.set(m.id, m));
+  pool.totalPi = 0; pool.paidOutPi = 0; pool.lastWeeklyPayout = null;
+  if (data.pool) Object.assign(pool, data.pool);
+  listingSeq = data.listingSeq || 1;
+  offerSeq = data.offerSeq || 1;
+  matchSeq = data.matchSeq || 1;
+  partSeq = data.partSeq || 1;
+}
 function save() {
   if (!DATA_FILE) return;
   try {
     fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
-    fs.writeFileSync(DATA_FILE, JSON.stringify({
-      users: [...users.values()],
-      usedMergeIds: [...usedMergeIds],
-      usedBattleIds: [...usedBattleIds],
-      payments: [...payments.values()],
-      listings: [...listings.values()],
-      offers: [...offers.values()],
-      matches: [...matches.values()],
-      pool,
-      listingSeq, offerSeq, matchSeq, partSeq,
-    }, null, 2));
+    fs.writeFileSync(DATA_FILE, JSON.stringify(serialize(), null, 2));
   } catch (e) { console.error('[store] save failed:', e.message); }
 }
 function load() {
   if (!DATA_FILE) return;
   try {
     if (!fs.existsSync(DATA_FILE)) return;
-    const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    (data.users || []).forEach((u) => users.set(u.uid, u));
-    (data.usedMergeIds || []).forEach((id) => usedMergeIds.add(id));
-    (data.usedBattleIds || []).forEach((id) => usedBattleIds.add(id));
-    (data.payments || []).forEach((p) => payments.set(p.paymentId, p));
-    (data.listings || []).forEach((l) => listings.set(l.id, l));
-    (data.offers || []).forEach((o) => offers.set(o.id, o));
-    (data.matches || []).forEach((m) => matches.set(m.id, m));
-    if (data.pool) Object.assign(pool, data.pool);
-    if (data.listingSeq) listingSeq = data.listingSeq;
-    if (data.offerSeq) offerSeq = data.offerSeq;
-    if (data.matchSeq) matchSeq = data.matchSeq;
-    if (data.partSeq) partSeq = data.partSeq;
+    deserialize(JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
   } catch (e) { console.error('[store] load failed:', e.message); }
 }
-load();
+load(); // local-dev file persistence only; on Vercel DATA_FILE is unset.
+
+/**
+ * Async persistence boundary — called by API handlers, NOT by game functions.
+ *
+ * loadState(): KV mode — fetch the shared document and replace the in-memory
+ * state with it (fresh on EVERY request, so warm instances never serve stale
+ * data). A missing key means a fresh store (empty state). No KV env vars —
+ * no-op: local dev keeps using the in-memory state (+ DATA_FILE, loaded above).
+ * Throws on any KV error (fail closed — see kv.js).
+ *
+ * saveState(): KV mode — write the whole document back. No KV env vars —
+ * writes the local DATA_FILE instead (via save()).
+ */
+function storeMode() { return kv.storeMode(); }
+async function loadState() {
+  if (!kv.isKvConfigured()) return;
+  const doc = await kv.loadState();
+  if (doc) deserialize(doc);
+  else deserialize({}); // fresh store: empty state
+}
+async function saveState() {
+  if (!kv.isKvConfigured()) { save(); return; }
+  await kv.saveState(serialize());
+}
+/** Handler helpers: load/save, answering 500 with a clear message on KV failure. Return false when they already answered. */
+async function requireLoad(res) {
+  try { await loadState(); return true; }
+  catch (e) { sendJson(res, 500, { error: `persistent store unavailable: ${e.message}` }); return false; }
+}
+async function requireSave(res) {
+  try { await saveState(); return true; }
+  catch (e) { sendJson(res, 500, { error: `persistent store unavailable: ${e.message}` }); return false; }
+}
 
 module.exports = {
   utcDay, addDays, weekKey,
   PART_TYPES, RARITIES, ABILITIES, INVENTORY_CAP, ETHEREAL_CAP, DRAW_ODDS, POOL_SHARE,
+  storeMode, loadState, saveState, requireLoad, requireSave,
   getUser, publicUser, publicPart, machinePower,
   claimDaily, mergeParts, equipEthereal, doBattle, forgeCraft,
   previewBattle, rerollBattle, surrenderBattle, fightBattle,

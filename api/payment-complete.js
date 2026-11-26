@@ -22,26 +22,31 @@ module.exports = async function handler(req, res) {
   if (body._parseError) return sendJson(res, 400, { error: 'invalid JSON body' });
   if (!body.paymentId) return sendJson(res, 400, { error: 'paymentId is required' });
   if (!body.uid) return sendJson(res, 400, { error: 'uid is required' });
+  if (!(await store.requireLoad(res))) return;
   const existing = store.getPayment(body.paymentId);
   if (existing && existing.status === 'completed') {
     return sendJson(res, 200, { ok: true, alreadyCompleted: true, status: 'completed' });
   }
   store.recordPayment(body.paymentId, body.uid, body.amount || null);
+  if (!(await store.requireSave(res))) return; // persist the payment record before the Pi call
   try {
     const result = await pi.completePayment(body.paymentId, body.txid);
     store.setPaymentStatus(body.paymentId, 'completed', body.txid);
     const payment = store.getPayment(body.paymentId);
     if (payment && payment.kind === 'draw' && payment.drawType) {
       const draws = store.grantDraws(body.uid, body.username, payment.drawType);
-      if (draws.error) return sendJson(res, 400, { ...draws, status: 'completed' });
+      if (draws.error) { if (!(await store.requireSave(res))) return; return sendJson(res, 400, { ...draws, status: 'completed' }); }
       const poolTotal = store.addToPool(payment.amount || store.DRAW_ODDS[payment.drawType].price);
+      if (!(await store.requireSave(res))) return;
       return sendJson(res, 200, { ...result, status: 'completed', kind: 'draw', drawType: payment.drawType, draws, poolTotal });
     }
     if (payment && payment.kind === 'shop-buy' && payment.listingId) {
       const sale = store.completeShopSale(payment.listingId, body.uid, body.username);
-      if (sale.error) return sendJson(res, 400, { ...sale, status: 'completed' });
+      if (sale.error) { if (!(await store.requireSave(res))) return; return sendJson(res, 400, { ...sale, status: 'completed' }); }
+      if (!(await store.requireSave(res))) return;
       return sendJson(res, 200, { ...result, status: 'completed', kind: 'shop-buy', sale });
     }
+    if (!(await store.requireSave(res))) return;
     return sendJson(res, 200, { ...result, status: 'completed', note: 'payment completed but no reward kind was recorded for it' });
   } catch (e) {
     sendJson(res, 502, { ok: false, error: `Pi complete failed: ${e.message}` });

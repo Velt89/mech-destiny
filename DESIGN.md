@@ -163,6 +163,8 @@ Minimum drop is **always Rare** — no Commons from paid draws.
 Same stack as Daily Quest: plain HTML/JS frontend (`public/`) + zero-dependency
 Node API routes (`api/`) that run as Vercel serverless functions and, locally,
 under `server.js`. Pi Auth only (scopes `username`, `payments`, `wallet_address`).
-PiNet fallback + guest preview, same as Daily Quest. Store is in-memory with
-optional local JSON persistence — **swap for a real DB before submission**
-(Vercel function instances are ephemeral).
+PiNet fallback + guest preview, same as Daily Quest. State is one shared JSON
+document in Vercel KV / Upstash Redis (`api/_lib/kv.js`), loaded at the start
+of every request and written back before responding — all function instances
+see the same data (in-memory + local JSON persistence only when no KV env
+vars are set, i.e. local dev).

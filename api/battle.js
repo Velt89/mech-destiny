@@ -19,6 +19,7 @@ module.exports = async function handler(req, res) {
   const body = await readJsonBody(req);
   if (body._parseError) return sendJson(res, 400, { error: 'invalid JSON body' });
   if (!body.uid) return sendJson(res, 400, { error: 'uid is required' });
+  if (!(await store.requireLoad(res))) return;
   const action = body.action || 'fight';
   let result;
   if (action === 'preview') {
@@ -36,6 +37,7 @@ module.exports = async function handler(req, res) {
   } else {
     return sendJson(res, 400, { error: `unknown action: ${action} (use preview, reroll, fight, surrender)` });
   }
+  if (!(await store.requireSave(res))) return; // preview creates a match; fight/surrender mutate
   if (result.error) return sendJson(res, 400, result);
   sendJson(res, 200, result);
 };

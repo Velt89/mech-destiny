@@ -11,6 +11,7 @@ module.exports = async function handler(req, res) {
     hackathon: 'Pi Next 2026',
     sandbox: pi.isSandbox(),
     serverKeyConfigured: pi.hasServerKey(),
+    store: store.storeMode(), // 'kv' (shared, Vercel) or 'memory' (local dev only)
     piSdkUrl: 'https://sdk.minepi.com/pi-sdk.js',
     piSdkVersion: '2.0',
     economy: {

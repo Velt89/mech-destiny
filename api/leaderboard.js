@@ -7,5 +7,8 @@ module.exports = async function handler(req, res) {
   if (req.method !== 'GET') return methodNotAllowed(res, ['GET']);
   const url = new URL(req.url, 'http://localhost');
   const limit = parseInt(url.searchParams.get('limit') || '20', 10) || 20;
-  sendJson(res, 200, store.leaderboard(limit));
+  if (!(await store.requireLoad(res))) return;
+  const result = store.leaderboard(limit); // matchRanking resets weekly wins, so it mutates
+  if (!(await store.requireSave(res))) return;
+  sendJson(res, 200, result);
 };

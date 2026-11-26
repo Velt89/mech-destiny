@@ -12,7 +12,9 @@ module.exports = async function handler(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const uid = url.searchParams.get('uid');
   if (!uid) return sendJson(res, 400, { error: 'uid is required' });
+  if (!(await store.requireLoad(res))) return;
   const u = store.getUser(uid);
+  if (!(await store.requireSave(res))) return; // getUser may have created the user
   sendJson(res, 200, {
     draws: store.DRAW_ODDS,
     etherealFate: {

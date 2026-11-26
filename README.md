@@ -36,15 +36,18 @@ no contract, no mint here.** Full design: `DESIGN.md`.
 
 Plain HTML/JS frontend (`public/`) + zero-dependency Node API routes (`api/`) that run
 as Vercel serverless functions and, locally, under `server.js` (same handlers, same
-behaviour). No build step, no framework, no database yet — the store is in-memory
-(`api/_lib/store.js`), with optional JSON persistence in local dev only.
+behaviour). No build step, no framework. The store is one shared JSON document
+in Vercel KV / Upstash Redis (`api/_lib/kv.js` + `api/_lib/store.js`), with
+in-memory + optional JSON persistence in local dev only — see
+"Persistent storage (Vercel KV)" below.
 
 ```
 mech-destiny/
 ├── DESIGN.md          full agreed game design (numbers, odds, caps)
 ├── public/            index.html, app.js, styles.css, privacy.html, logo.svg
 ├── api/
-│   ├── _lib/store.js  users, parts, battles, draws, forge, shop, pool (in-memory)
+│   ├── _lib/store.js  users, parts, battles, draws, forge, shop, pool (shared KV doc)
+│   ├── _lib/kv.js     Vercel KV / Upstash Redis adapter (one JSON document, fail-closed)
 │   ├── _lib/pi.js     Platform API: /me verify, payment approve/complete (server-side only)
 │   ├── _lib/http.js   JSON helpers
 │   ├── status.js      GET  /api/status
@@ -81,6 +84,48 @@ Try it without any Pi account: **Try as guest** → **Check in today** (Base Mac
 you have 5 fragments + a Legendary. Re-checking in the same UTC day returns
 `alreadyClaimed: true` with no double points. `npm run check` runs `node --check`
 over every JS file.
+
+## Persistent storage (Vercel KV)
+
+Why it exists: on Vercel each function instance has its own memory. Before this
+swap, a part granted on one instance was invisible on the next request if it
+landed on another instance — merges after merges and draws-then-sell failed
+with "not in your inventory" until a page refresh landed back on the right
+instance, and every deploy wiped everything. Now the whole game state is ONE
+JSON document (`mech-destiny:state:v1`) in a shared KV/Redis store: every
+request loads it first and writes it back before responding, so all instances
+see the same users, parts, matches, pool and shop listings.
+
+User steps (Vercel dashboard — no code changes needed):
+1. Vercel dashboard → the `mech-destiny` project → **Storage** → **Create** →
+   **KV** (or **Redis** from the Marketplace — Vercel KV is deprecated and new
+   stores are Upstash Redis; both work, the code detects either).
+2. Attach the store to the `mech-destiny` project. Vercel auto-adds the env
+   vars (`KV_REST_API_URL` + `KV_REST_API_TOKEN`, or `UPSTASH_REDIS_REST_URL` +
+   `UPSTASH_REDIS_REST_TOKEN` for Upstash, plus `KV_URL`).
+3. **Redeploy** the project so the new env vars reach the functions.
+
+Verify live afterwards:
+- `GET /api/status` returns `"store": "kv"` (before the store is attached it
+  returns `"store": "memory"`).
+- Play the loop in Pi Browser: check in, merge twice in a row, draw then sell —
+  all without a page refresh. Parts must survive a redeploy.
+
+Behaviour notes:
+- Without those env vars the app runs exactly as before (in-memory + local
+  `./data/store.json` in dev). No code change is needed to run locally.
+- If KV is configured but unreachable (bad token, network error), API calls
+  fail closed with HTTP 500 `persistent store unavailable: ...` — there is
+  deliberately no silent fallback to per-instance memory, which would
+  reintroduce the split-brain bug while looking healthy.
+- Known limit: read-modify-write on one document — two requests for the SAME
+  user at the same instant can lose one update (last write wins). Requests for
+  one user are sequential in practice (one browser, one tap at a time), and
+  idempotency keys make replays safe. Per-entity keys / Redis transactions are
+  a later TODO, not needed for the hackathon scaffold.
+- The store starts EMPTY when first attached: existing players' parts from the
+  old in-memory era do not migrate (there was nothing durable to migrate from).
+  Everyone checks in fresh after the swap.
 
 ## Deploy to Vercel
 
@@ -160,10 +205,14 @@ fresh explicit go-ahead, since that flips payments to real Pi.
 - [ ] Register Mech Destiny as a separate app in the Developer Web Console (Staging);
       deploy to Vercel; verify the domain; set `PI_SERVER_API_KEY`; create the App Wallet.
 - [ ] Sandbox handshake passes end-to-end (the 8 steps above).
-- [ ] **Replace the in-memory store with a real database** (Vercel KV / Postgres / any
-      hosted store). On Vercel, function instances are ephemeral — machines, parts and
-      leaderboards will silently reset on cold starts until this is done. The swap is
-      one module (`api/_lib/store.js`); the API surface is already DB-shaped.
+- [x] **Persistent shared store** (done 2026-11-26): whole game state is one JSON
+      document in Vercel KV / Upstash Redis (`api/_lib/kv.js` + `api/_lib/store.js`);
+      every request loads it first and writes it back before responding, so all
+      function instances share the same data and deploys no longer wipe parts.
+      Still to do in Vercel: create + attach the KV/Redis store and redeploy
+      (see "Persistent storage (Vercel KV)" above); verify `/api/status`
+      shows `"store": "kv"`. Remaining limit: read-modify-write race on the
+      single document (see kv.js) — per-entity keys / transactions are a later TODO.
 - [ ] **Real PvP matching** for battles (currently a bot rival) — match by Machine
       Power bands, with a timeout so a battle always resolves.
 - [ ] **Real Pi settlement:** weekly pool payouts to winners and shop seller payouts

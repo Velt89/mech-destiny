@@ -18,6 +18,7 @@ module.exports = async function handler(req, res) {
   if (body._parseError) return sendJson(res, 400, { error: 'invalid JSON body' });
   if (!body.paymentId) return sendJson(res, 400, { error: 'paymentId is required' });
   if (!body.uid) return sendJson(res, 400, { error: 'uid is required' });
+  if (!(await store.requireLoad(res))) return;
   if (body.kind === 'draw') {
     const cfg = store.DRAW_ODDS[body.drawType];
     if (!cfg) return sendJson(res, 400, { error: `unknown draw type: ${body.drawType}` });
@@ -32,9 +33,11 @@ module.exports = async function handler(req, res) {
     if (listing.sellerUid === body.uid) return sendJson(res, 400, { error: 'you cannot buy your own listing' });
   }
   store.recordPayment(body.paymentId, body.uid, body.amount || null, { kind: body.kind, drawType: body.drawType, listingId: body.listingId });
+  if (!(await store.requireSave(res))) return; // persist the payment record before the Pi call
   try {
     const result = await pi.approvePayment(body.paymentId);
     store.setPaymentStatus(body.paymentId, 'approved');
+    if (!(await store.requireSave(res))) return;
     sendJson(res, 200, { ...result, status: 'approved' });
   } catch (e) {
     sendJson(res, 502, { ok: false, error: `Pi approve failed: ${e.message}` });

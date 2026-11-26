@@ -11,10 +11,16 @@ const store = require('./_lib/store');
  *     In production this must be a scheduled/admin-only job, not a public call.
  */
 module.exports = async function handler(req, res) {
-  if (req.method === 'GET') return sendJson(res, 200, store.getPool());
+  if (req.method === 'GET') {
+    if (!(await store.requireLoad(res))) return;
+    return sendJson(res, 200, store.getPool());
+  }
   if (req.method !== 'POST') return methodNotAllowed(res, ['GET', 'POST']);
   const body = await readJsonBody(req);
   if (body._parseError) return sendJson(res, 400, { error: 'invalid JSON body' });
   if (body.action !== 'payout') return sendJson(res, 400, { error: "unknown action (use 'payout')" });
-  sendJson(res, 200, store.weeklyPayout());
+  if (!(await store.requireLoad(res))) return;
+  const result = store.weeklyPayout();
+  if (!(await store.requireSave(res))) return;
+  sendJson(res, 200, result);
 };

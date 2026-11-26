@@ -16,6 +16,7 @@ module.exports = async function handler(req, res) {
   if (req.method === 'GET') {
     const url = new URL(req.url, 'http://localhost');
     const uid = url.searchParams.get('uid');
+    if (!(await store.requireLoad(res))) return;
     return sendJson(res, 200, {
       listings: store.listListings(),
       offersForYou: uid ? store.listOffersFor(uid) : [],
@@ -26,6 +27,7 @@ module.exports = async function handler(req, res) {
   const body = await readJsonBody(req);
   if (body._parseError) return sendJson(res, 400, { error: 'invalid JSON body' });
   if (!body.uid) return sendJson(res, 400, { error: 'uid is required' });
+  if (!(await store.requireLoad(res))) return;
   let result;
   if (body.action === 'create-listing') {
     result = store.createListing(body.uid, body.username, { partId: body.partId, pricePi: body.pricePi });
@@ -36,6 +38,7 @@ module.exports = async function handler(req, res) {
   } else {
     return sendJson(res, 400, { error: `unknown action: ${body.action} (use create-listing, create-offer, accept-offer)` });
   }
+  if (!(await store.requireSave(res))) return; // create/accept mutate; getUser may also have created the user
   if (result.error) return sendJson(res, 400, result);
   sendJson(res, 200, result);
 };

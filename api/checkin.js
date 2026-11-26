@@ -18,6 +18,8 @@ module.exports = async function handler(req, res) {
   if (!body.uid || typeof body.uid !== 'string') {
     return sendJson(res, 400, { error: 'uid is required' });
   }
+  if (!(await store.requireLoad(res))) return;
   const result = store.claimDaily(body.uid, body.username);
+  if (!(await store.requireSave(res))) return;
   sendJson(res, 200, result);
 };

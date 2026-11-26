@@ -13,7 +13,9 @@ module.exports = async function handler(req, res) {
   const body = await readJsonBody(req);
   if (body._parseError) return sendJson(res, 400, { error: 'invalid JSON body' });
   if (!body.uid) return sendJson(res, 400, { error: 'uid is required' });
+  if (!(await store.requireLoad(res))) return;
   const result = store.forgeCraft(body.uid, body.username, { legendaryPartId: body.legendaryPartId });
+  if (!(await store.requireSave(res))) return;
   if (result.error) return sendJson(res, 400, result);
   sendJson(res, 200, result);
 };

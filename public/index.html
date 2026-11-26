@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mech Destiny — merge, battle, forge your machine</title>
+  <meta name="description" content="Mech Destiny (working title): check in daily for random-stat parts, merge them up, battle with absolute stakes, forge Ethereals, and trade in the Pi shop. Built for the Pi Next Hackathon 2026.">
+  <!-- Pi SDK — loaded dynamically by app.js so the page still works on PiNet
+       (browse-only) when the SDK is unavailable. Pi.init runs before any Pi call. -->
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+</head>
+<body>
+  <header class="topbar">
+    <img src="/logo.svg" alt="" class="logo" width="36" height="36">
+    <div>
+      <h1>Mech Destiny</h1>
+      <p class="subtitle">Merge parts. Battle for keeps. Forge an Ethereal. — working title for the Pi Next Hackathon 2026</p>
+    </div>
+    <span id="envBadge" class="badge">…</span>
+  </header>
+
+  <main>
+    <!-- PiNet / Pi Browser status. This whole page is the public, browse-only surface:
+         anyone can read it; Pi-gated actions ask you to open it in Pi Browser. -->
+    <section id="piStatus" class="card notice">
+      <strong id="piStatusTitle">Checking Pi…</strong>
+      <p id="piStatusText">Loading the Pi SDK.</p>
+    </section>
+
+    <section class="card" id="authCard">
+      <h2>Your Pioneer profile</h2>
+      <p id="authState">Not signed in. Sign in with Pi to save your machine, parts and leaderboard spot. No email, no password — Pi Authentication only.</p>
+      <div class="row">
+        <button id="signInBtn" class="btn primary" disabled>Sign in with Pi</button>
+        <button id="guestBtn" class="btn">Try as guest (preview only)</button>
+      </div>
+      <p class="fineprint">Guest preview lets you try the game in this browser. Guest progress is not tied to a Pi account and does not count for the leaderboard prizes.</p>
+      <dl id="profileBox" class="profile" hidden>
+        <div><dt>Pioneer</dt><dd id="profileName">—</dd></div>
+        <div><dt>Streak</dt><dd id="profileStreak">—</dd></div>
+        <div><dt>Best streak</dt><dd id="profileBest">—</dd></div>
+        <div><dt>Quest points</dt><dd id="profilePoints">—</dd></div>
+        <div><dt>Machine</dt><dd id="profileMachine">—</dd></div>
+        <div><dt>Parts</dt><dd id="profileParts">—</dd></div>
+        <div><dt>Machine Power</dt><dd id="profilePower">—</dd></div>
+        <div><dt>Blueprint Fragments</dt><dd id="profileFragments">—</dd></div>
+        <div><dt>Battles (W–L)</dt><dd id="profileWins">—</dd></div>
+        <div><dt>Ethereal Fate</dt><dd id="profileFate">—</dd></div>
+        <div><dt>Pi ledger</dt><dd id="profileBalance">—</dd></div>
+      </dl>
+    </section>
+
+    <section class="card" id="checkinCard">
+      <h2>Daily check-in</h2>
+      <p>One check-in per UTC day: <strong>+50 points</strong>, plus <strong>+10 per streak day</strong> (cap +70), and <strong>+1 random part</strong>. Streak milestones: <strong>day 3 → Rare, day 7 → Epic, day 14 → Legendary</strong>. Miss a day and your streak resets to day 1. Your first check-in grants your <strong>Base Machine</strong>.</p>
+      <button id="checkinBtn" class="btn primary" disabled>Check in today</button>
+      <p id="checkinMsg" class="msg" aria-live="polite"></p>
+    </section>
+
+    <section class="card" id="inventoryCard">
+      <h2>Your machine &amp; parts</h2>
+      <p>Every part has randomly rolled Power / Speed / Armor. Merge 2 identical parts (same type and rarity) into 1 part, one rarity up. Tick two identical parts, then merge. Inventory cap: <strong>50 parts</strong>.</p>
+      <div id="inventoryList"><p>Sign in or try as guest to see your parts.</p></div>
+      <div class="row">
+        <button id="mergeBtn" class="btn primary" disabled>Merge selected (2)</button>
+        <span id="selectedCount" class="fineprint"></span>
+      </div>
+      <p id="mergeMsg" class="msg" aria-live="polite"></p>
+      <p id="equipMsg" class="msg" aria-live="polite"></p>
+    </section>
+
+    <section class="card" id="battleCard">
+      <h2>Battle — absolute stakes</h2>
+      <p>One free battle a day. Your top 3 parts fight a rival machine, stats vs stats. <strong>Lose and you lose a part. Win and you take one</strong> — plus a Blueprint Fragment (2 on a 3-win streak). Ethereal never drops from battle.</p>
+      <button id="battleBtn" class="btn primary" disabled>Battle today (free)</button>
+      <p id="battleMsg" class="msg" aria-live="polite"></p>
+    </section>
+
+    <section class="card" id="forgeCard">
+      <h2>The Forge — craft an Ethereal</h2>
+      <p><strong>5 Blueprint Fragments + 1 Legendary part</strong> → 1 Ethereal of that type, with a rolled ability (Overdrive, Shield, or Magnet). Ethereal is never a free or battle drop. Max 3 Ethereals owned, max 3 equipped.</p>
+      <div class="row">
+        <select id="forgeSelect" aria-label="Legendary part to forge"></select>
+        <button id="forgeBtn" class="btn primary" disabled>Craft Ethereal (5 fragments)</button>
+      </div>
+      <p id="forgeMsg" class="msg" aria-live="polite"></p>
+    </section>
+
+    <section class="card" id="drawCard">
+      <h2>Pay draws — Ethereal Fate</h2>
+      <p>Paid draws never drop Commons — minimum is <strong>Rare</strong>. <strong>Standard Draw 0.5 π</strong> (Rare 70 / Epic 22 / Legendary 7 / Ethereal 1%), <strong>Ethereal Forge 1 π</strong> (Rare 55 / Epic 30 / Legendary 12 / Ethereal 3%), <strong>10-pack 9 π</strong> (Forge rates, guaranteed at least 1 Legendary). 10% of every draw goes to the weekly reward pool.</p>
+      <p id="fateText" class="msg">Ethereal Fate: sign in to see your pity counter.</p>
+      <div class="row">
+        <button id="drawStandardBtn" class="btn primary" disabled>Standard Draw (0.5 π)</button>
+        <button id="drawForgeBtn" class="btn primary" disabled>Ethereal Forge (1 π)</button>
+        <button id="drawPackBtn" class="btn primary" disabled>10-pack (9 π)</button>
+      </div>
+      <p id="drawMsg" class="msg" aria-live="polite"></p>
+      <p class="fineprint">Sandbox mode: test payments move no real Pi. Buttons stay disabled until the Pi SDK is ready in Pi Browser, and every payment asks you to confirm first.</p>
+    </section>
+
+    <section class="card" id="shopCard">
+      <h2>Shop — sell &amp; trade parts for Pi</h2>
+      <p>Sell a duplicate part at a price you set, or make a trade offer to another player. Buying goes through a Pi payment; the part changes owner only after the payment completes.</p>
+      <div class="row">
+        <select id="listPartSelect" aria-label="Part to sell"></select>
+        <input id="listPrice" type="number" min="0.1" step="0.1" placeholder="Price in π" aria-label="Price in Pi">
+        <button id="listBtn" class="btn primary" disabled>List for sale</button>
+      </div>
+      <p id="shopMsg" class="msg" aria-live="polite"></p>
+      <h3>Listings</h3>
+      <div id="shopListings"><p>No listings yet.</p></div>
+      <h3>Trade offers for you</h3>
+      <div id="shopOffers"><p>No offers for you yet.</p></div>
+    </section>
+
+    <section class="card" id="leaderboardCard">
+      <h2>Match ranking &amp; reward pool</h2>
+      <p>Ranked by wins this week (tie-break: Machine Power). Every week the top 3 split 10% of the reward pool: 1st 5%, 2nd 3%, 3rd 2%.</p>
+      <p id="poolText" class="msg">Reward pool: —</p>
+      <ol id="leaderboard"><li>Loading…</li></ol>
+      <button id="refreshLbBtn" class="btn">Refresh</button>
+    </section>
+
+    <section class="card">
+      <h2>How it works</h2>
+      <ol class="howto">
+        <li>Open this app in <strong>Pi Browser</strong> and sign in with Pi.</li>
+        <li>Check in once a day — day 1 gives you a Base Machine and a part; day 3, 7 and 14 give guaranteed Rare, Epic and Legendary parts.</li>
+        <li>Merge identical parts to climb rarities. Battle once a day — the loser loses a part.</li>
+        <li>Forge Ethereals from 5 Blueprint Fragments + a Legendary, or try a pay draw (minimum Rare, Ethereal Fate pity applies).</li>
+        <li>Sell duplicates and trade in the shop. Climb the weekly match ranking for a share of the reward pool.</li>
+      </ol>
+      <p class="fineprint">Mech Destiny is a hackathon entry (Pi Next 2026). It is not affiliated with Pi Network, and the name is a working title. <a href="/privacy.html">Privacy policy (draft)</a></p>
+    </section>
+  </main>
+
+  <footer>
+    <p>Mech Destiny — Day-1 scaffold. Pi Next Hackathon 2026, submission deadline Jan 5, 2027 11:59 PM PST.</p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

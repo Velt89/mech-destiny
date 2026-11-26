@@ -7,8 +7,8 @@
  *
  * Persistence: the whole game state is ONE JSON document in a shared store.
  *   - On Vercel with a KV/Redis store attached (KV_REST_API_URL +
- *     KV_REST_API_TOKEN, or UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN),
- *     every function instance loads the document at the start of each request
+ *     KV_REST_API_TOKEN, or UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN,
+ *     or REDIS_URL for a Marketplace Redis store), every function instance loads the document at the start of each request
  *     (store.loadState()) and writes it back before responding
  *     (store.saveState()). All instances therefore see the same users, parts,
  *     matches, pool and shop listings, and deploys no longer wipe anything.

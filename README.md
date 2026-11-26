@@ -102,7 +102,11 @@ User steps (Vercel dashboard — no code changes needed):
    stores are Upstash Redis; both work, the code detects either).
 2. Attach the store to the `mech-destiny` project. Vercel auto-adds the env
    vars (`KV_REST_API_URL` + `KV_REST_API_TOKEN`, or `UPSTASH_REDIS_REST_URL` +
-   `UPSTASH_REDIS_REST_TOKEN` for Upstash, plus `KV_URL`).
+   `UPSTASH_REDIS_REST_TOKEN` for Upstash, plus `KV_URL`). A Marketplace
+   **Redis** store adds ONLY `REDIS_URL` (a `redis://` / `rediss://` URL, no
+   REST credentials) — the backend speaks the native Redis protocol over it
+   via the `redis` package (`rediss://` = TLS); REST backends keep priority
+   if both are ever set. This is what `mech-destiny-prod` uses.
 3. **Redeploy** the project so the new env vars reach the functions.
 
 Verify live afterwards:

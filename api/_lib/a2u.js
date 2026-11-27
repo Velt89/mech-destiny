@@ -25,6 +25,18 @@
  * function instance has its own mutex — payouts are rare, admin-triggered,
  * one at a time in practice; a distributed lock is a later TODO.
  *
+ * LAZY SDK LOAD: @stellar/stellar-sdk v17 is a dual ESM/CJS package
+ * ("type": "module" in its package.json, with exports mapping require ->
+ * ./lib/cjs/index.js and import -> ./lib/esm/index.js). A top-level
+ * require() of it from this CommonJS module loads fine under plain Node,
+ * but Vercel's serverless bundler mishandles it: on Vercel the whole
+ * api/payout handler failed to load ("handler is not a function", HTTP 500)
+ * while api/payouts (no Stellar dependency) worked. The SDK is therefore
+ * loaded LAZILY via dynamic import() inside the payout path only
+ * (loadStellar, cached) — requiring this module or api/payout.js never
+ * touches the SDK. This mirrors api/_lib/kv.js, which already lazy-requires
+ * @vercel/kv and redis inside functions for the same reason.
+ *
  * Env (read per call, so tests can re-point them):
  *   PI_SANDBOX            must be "true" — anything else refuses (see api/payout.js).
  *   PI_SERVER_API_KEY     Pi Server API Key (same as U2A approve/complete).
@@ -36,7 +48,18 @@
  * module is never called.
  */
 
-const StellarSdk = require('@stellar/stellar-sdk');
+/**
+ * Lazy-load the Stellar SDK via dynamic import() — see the header note.
+ * import() resolves the package's ESM entry (./lib/esm/index.js) and the
+ * returned namespace exposes the named exports directly (Keypair,
+ * Horizon.Server, TransactionBuilder, Operation, Asset, Memo). Cached so
+ * concurrent payouts share one import. Never called at module load time.
+ */
+let stellarPromise = null;
+function loadStellar() {
+  if (!stellarPromise) stellarPromise = import('@stellar/stellar-sdk');
+  return stellarPromise;
+}
 
 const MAX_PAYOUT_PI = 1;
 const HORIZON_TESTNET_URL = 'https://api.testnet.minepi.com';
@@ -117,6 +140,7 @@ async function completeA2UPayment(paymentId, txid) {
  * `horizon` is injectable for tests; defaults to the real Pi Testnet Horizon.
  */
 async function submitA2UTransaction({ paymentId, recipient, amount }, seed, horizon) {
+  const StellarSdk = await loadStellar();
   const keypair = StellarSdk.Keypair.fromSecret(seed);
   const horizonUrl = process.env.PI_HORIZON_URL || HORIZON_TESTNET_URL;
   // The SDK refuses plain-http Horizon URLs unless allowHttp is set. The

@@ -650,6 +650,15 @@ function recordPayout(rec) {
   return stored;
 }
 function getPayout(payoutId) { return payouts.get(payoutId) || null; }
+/** Admin-only list of payout recipients: every signed-in user (uid +
+ * username) with whether they already received a completed A2U payout.
+ * Uids are app-local and useless outside this app; this is still admin-gated
+ * (X-Admin-Token) because it is the input list for sending Pi. */
+function listPayoutRecipients() {
+  const paid = new Set([...payouts.values()].filter((p) => p.status === 'completed').map((p) => p.uid));
+  return [...users.values()].map((u) => ({ uid: u.uid, username: u.username, paidCompleted: paid.has(u.uid) }));
+}
+
 /** Public summary only — counts and totals, NO uids/usernames/addresses. */
 function payoutSummary() {
   const all = [...payouts.values()];
@@ -867,7 +876,7 @@ module.exports = {
   grantDraws, addToPool, getPool, weeklyPayout,
   matchRanking, leaderboard,
   recordPayment, setPaymentStatus, getPayment,
-  recordPayout, getPayout, payoutSummary,
+  recordPayout, getPayout, payoutSummary, listPayoutRecipients,
   createListing, listListings, getListing, completeShopSale,
   createOffer, listOffersFor, acceptOffer,
 };

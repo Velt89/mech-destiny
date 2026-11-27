@@ -50,6 +50,7 @@ const apiHandlers = {
   '/api/payment-complete': require('./api/payment-complete'),
   '/api/payout': require('./api/payout'),
   '/api/payouts': require('./api/payouts'),
+  '/api/admin-recipients': require('./api/admin-recipients'),
 };
 
 const server = http.createServer(async (req, res) => {

@@ -112,9 +112,12 @@ async function platformPost(path, body) {
   return data;
 }
 
-/** Step 1 — create the A2U payment on the Pi Platform API. */
+/** Step 1 — create the A2U payment on the Pi Platform API.
+ * Body MUST be wrapped: { payment: { amount, memo, metadata, uid } } —
+ * Pi's official Platform API docs show exactly this shape, and a flat body
+ * is rejected (live 2026-11-27: POST /payments with a flat body → HTTP 404). */
 async function createA2UPayment({ uid, amount, memo, metadata }) {
-  const data = await platformPost('/payments', { amount, memo, metadata: metadata || {}, uid });
+  const data = await platformPost('/payments', { payment: { amount, memo, metadata: metadata || {}, uid } });
   const paymentId = data && data.identifier;
   // Real Pi responses carry the recipient as `to_address` (the guide's
   // `recipient` field is not present in live responses — see pi-nodejs
